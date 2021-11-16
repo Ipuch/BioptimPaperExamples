@@ -26,11 +26,12 @@ from .viz import add_custom_plots
 
 class JumperOcp:
     def __init__(
-        self,
-        jumper: Jumper,
-        n_thread=8,
-        control_type=ControlType.CONSTANT,
-        ode_solver=OdeSolver.COLLOCATION(),
+            self,
+            jumper: Jumper,
+            n_thread=8,
+            control_type=ControlType.CONSTANT,
+            ode_solver=OdeSolver.COLLOCATION(),
+            update_obj=False,
     ):
         self.n_q, self.n_qdot, self.n_tau = -1, -1, -1
 
@@ -52,7 +53,7 @@ class JumperOcp:
 
         self._set_dynamics()
         self._set_constraints()
-        self._set_objective_functions()
+        self._set_objective_functions(update_obj)
 
         self._set_boundary_conditions()
         self._set_initial_guesses()
@@ -90,9 +91,27 @@ class JumperOcp:
     def _set_constraints(self):
         pass
 
-    def _set_objective_functions(self):
+    def _set_objective_functions(self, update_obj):
         # Maximize the jump height
-        self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_POSITION, weight=-100, quadratic=False)
+        if not update_obj:
+            #
+            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_COM_VELOCITY, weight=100, quadratic=True)
+            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_STATE, key="qdot", weight=1, quadratic=True)
+            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, derivative=True, key="tau", weight=2,
+                                         quadratic=True)
+            # self.objective_functions.add(ObjectiveFcn.Lagrange.Mini, derivative=True, key="tau", weight=2,
+            #                              quadratic=True)
+            # self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_STATE, key="qdot", weight=50, quadratic=True,
+            # node=Node.END)
+            # self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_POSITION, weight=-100, quadratic=False)
+        else:
+            self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_POSITION, weight=-100, quadratic=False,
+                                         index=2)
+            # self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_POSITION, weight=-100, quadratic=False)
+            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, derivative=True, key="tau", weight=2,
+                                         quadratic=True)
+            self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_VELOCITY, weight=-100, quadratic=False,
+                                         index=2, node=Node.PENULTIMATE)
 
         # Minimize time of the phase
         if self.jumper.time_min != self.jumper.time_max:
@@ -110,13 +129,20 @@ class JumperOcp:
         self.u_bounds[0][:self.jumper.model.nbRoot(), :] = 0
 
         # Enforce the initial pose and velocity
-        self.x_bounds[0][:, 0] = self.initial_states[:, 0]  # TODO relax
+        self.x_bounds[0].max[:, 0] = self.initial_states[:, 0] + 1e-4
+        self.x_bounds[0].min[:, 0] = self.initial_states[:, 0] - 1e-4
+
+        # self.x_bounds[0].max[self.n_q:, -1] = + 1e-3
+        # self.x_bounds[0].min[self.n_q:, -1] = - 1e-3
+
+        # self.x_bounds[0][:, 0] = self.initial_states[:, 0]
 
     def _set_initial_guesses(self):
         self.x_init.add(self.initial_states)
         self.u_init.add([0] * self.n_tau)
 
-    def solve(self, limit_memory_max_iter, exact_max_iter, load_path=None, force_no_graph=False, linear_solver="mumps"):
+    def solve(self, limit_memory_max_iter, exact_max_iter, load_path=None,
+              force_no_graph=False, linear_solver="mumps", sol=None):
         # Run optimizations
         if not force_no_graph:
             add_custom_plots(self.ocp, self)
@@ -125,19 +151,18 @@ class JumperOcp:
             _, sol = OptimalControlProgram.load(load_path)
             return sol
         else:
-            sol = None
             solver = Solver.IPOPT()
             solver.set_linear_solver(linear_solver)
             # solver.set_print_level(0)
 
-            if limit_memory_max_iter > 0:
+            if limit_memory_max_iter > 0 and sol is None:
                 solver.set_hessian_approximation("limited-memory")
                 solver.set_maximum_iterations(limit_memory_max_iter)
                 solver.show_online_optim = exact_max_iter == 0 and not force_no_graph
                 solver.set_convergence_tolerance(1e-2)
                 sol = self.ocp.solve(solver)
 
-            if limit_memory_max_iter > 0 and exact_max_iter > 0:
+            if (limit_memory_max_iter > 0 or sol is not None) and exact_max_iter > 0:
                 self.ocp.set_warm_start(sol)
 
             if exact_max_iter > 0:
@@ -145,6 +170,7 @@ class JumperOcp:
                 solver.set_maximum_iterations(exact_max_iter)
                 solver.set_warm_start_options()
                 solver.show_online_optim = not force_no_graph
+                solver.set_convergence_tolerance(1e-2)
                 sol = self.ocp.solve(solver)
 
             return sol

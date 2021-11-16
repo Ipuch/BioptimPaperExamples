@@ -94,7 +94,7 @@ version   4
         parent    Leg
         RT pi/2 0 0 xyz 0 0 -0.427480971
         rotations    x
-        rangesQ -0.7 0.7
+        rangesQ -0.7 0.8
         rangesQdot -17 17
         mass    1.16000
         inertia

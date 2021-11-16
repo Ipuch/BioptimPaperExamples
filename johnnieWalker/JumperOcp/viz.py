@@ -1,7 +1,7 @@
 import numpy as np
 import biorbd_casadi as biorbd
 
-from bioptim import PlotType
+from bioptim import PlotType, CostType
 
 
 def plot_com(x, nlp):
@@ -47,3 +47,5 @@ def add_custom_plots(ocp, jumper_ocp):
             phase=i,
             plot_type=PlotType.PLOT,
         )
+
+        # ocp.add_plot_penalty(CostType.ALL)

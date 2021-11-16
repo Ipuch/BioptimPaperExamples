@@ -7,10 +7,10 @@ from bioptim import BiMapping
 
 class Jumper:
     model_files = "jumperSoftContacts.bioMod"
-    time_min = 1.5
-    time_max = 1.5
-    phase_time = 1.5
-    n_shoot = 300
+    time_min = 0.1
+    time_max = 0.1
+    phase_time = 0.1
+    n_shoot = 100
 
     tau_constant_bound = 500
     tau_min = 15
@@ -19,7 +19,7 @@ class Jumper:
     initial_velocity = [0, 0, 0, 0, 0, 0]
     heel_idx = 0
     toe_idx = 1
-    floor_z = 0.10
+    floor_z = 0.095
 
     def __init__(self, path_to_models):
         self.path = path_to_models
