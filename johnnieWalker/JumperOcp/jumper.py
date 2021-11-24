@@ -7,10 +7,7 @@ from bioptim import BiMapping
 
 class Jumper:
     model_files = "jumperSoftContacts.bioMod"
-    time_min = 0.1
-    time_max = 0.1
-    phase_time = 0.1
-    n_shoot = 100
+    n_shoot = 50
 
     tau_constant_bound = 500
     tau_min = 15
@@ -21,9 +18,12 @@ class Jumper:
     toe_idx = 1
     floor_z = 0.095
 
-    def __init__(self, path_to_models):
+    def __init__(self, path_to_models, time=0.4):
         self.path = path_to_models
         self.model = biorbd.Model(path_to_models + "/" + self.model_files)
+        self.time_min = time
+        self.time_max = time
+        self.phase_time = time
 
     def find_initial_root_pose(self):
         model = biorbd.Model(self.path + "/" + self.model_files)
@@ -48,7 +48,8 @@ class Jumper:
         com_func = biorbd.to_casadi_func("com", model.CoM, q_sym)
         fd_func = biorbd.to_casadi_func("fd", model.ForwardDynamics, q_sym, qdot_sym, tau_sym)
         marker_func = biorbd.to_casadi_func("markers", model.markers, q_sym, True)
-        marker_accel_func = biorbd.to_casadi_func("marker_accel", model.markerAcceleration, q_sym, qdot_sym, qddot_sym, True)
+        marker_accel_func = biorbd.to_casadi_func("marker_accel", model.markerAcceleration, q_sym, qdot_sym, qddot_sym,
+                                                  True)
 
         def objective_function(q, *args, **kwargs):
             # Center of mass
@@ -64,10 +65,10 @@ class Jumper:
             out = np.concatenate((out, contacts[1, :] - self.floor_z))
 
             # The projection of the center of mass should be at 0 and at 0.95 meter high
-            out = np.concatenate((out, (com - [mean_contacts[0], 0.75]) * 10))
+            out = np.concatenate((out, (com - [mean_contacts[0], 1.2]) * 10))
 
-            tau = np.zeros(model.nbQ(),)
-            qdot = np.zeros(model.nbQ(),)
+            tau = np.zeros(model.nbQ(), )
+            qdot = np.zeros(model.nbQ(), )
             qddot = fd_func(q, qdot, tau)
             out = np.concatenate((out, np.array(marker_accel_func(q, qdot, qddot))[2, :]))
 

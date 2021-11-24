@@ -17,11 +17,15 @@ from bioptim import (
     BiMappingList,
     ControlType,
     Solver,
+    Bounds,
+    InitialGuess,
+    InterpolationType,
 )
 
 from .jumper import Jumper
 from .penalty_functions import com_dot_z, marker_on_floor, contact_force_continuity
 from .viz import add_custom_plots
+from pyomeca import angles
 
 
 class JumperOcp:
@@ -32,9 +36,12 @@ class JumperOcp:
             control_type=ControlType.CONSTANT,
             ode_solver=OdeSolver.COLLOCATION(),
             update_obj=False,
+            X0=None,
+            U0=None,
     ):
         self.n_q, self.n_qdot, self.n_tau = -1, -1, -1
-
+        self.X0 = X0
+        self.U0 = U0
         self.dynamics = DynamicsList()
         self.constraints = ConstraintList()
         self.objective_functions = ObjectiveList()
@@ -49,7 +56,7 @@ class JumperOcp:
         self.control_nodes = Node.ALL if self.control_type == ControlType.LINEAR_CONTINUOUS else Node.ALL_SHOOTING
 
         self._set_dimensions_and_mapping()
-        self._set_initial_states()
+        self._set_initial_states(X0, U0)
 
         self._set_dynamics()
         self._set_constraints()
@@ -74,11 +81,14 @@ class JumperOcp:
             ode_solver=ode_solver,
         )
 
-    def _set_initial_states(self):
-        initial_pose = self.jumper.find_initial_root_pose()
-        # self.jumper.show(initial_pose)
-        initial_velocity = np.array([self.jumper.initial_velocity]).T
-        self.initial_states = np.concatenate((initial_pose, initial_velocity))
+    def _set_initial_states(self, X0, U0):
+        if X0 is None:
+            initial_pose = self.jumper.find_initial_root_pose()
+            # self.jumper.show(initial_pose)
+            initial_velocity = np.array([self.jumper.initial_velocity]).T
+            self.initial_states = np.concatenate((initial_pose, initial_velocity))
+        else:
+            self.initial_states = X0[:self.n_q * 2, :]
 
     def _set_dimensions_and_mapping(self):
         self.n_q = self.jumper.model.nbQ()
@@ -86,7 +96,7 @@ class JumperOcp:
         self.n_tau = self.jumper.model.nbGeneralizedTorque()
 
     def _set_dynamics(self):
-        self.dynamics.add(DynamicsFcn.TORQUE_DRIVEN)
+        self.dynamics.add(DynamicsFcn.TORQUE_DERIVATIVE_DRIVEN)
 
     def _set_constraints(self):
         pass
@@ -94,24 +104,47 @@ class JumperOcp:
     def _set_objective_functions(self, update_obj):
         # Maximize the jump height
         if not update_obj:
-            #
             self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_COM_VELOCITY, weight=100, quadratic=True)
-            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_STATE, key="qdot", weight=1, quadratic=True)
-            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, derivative=True, key="tau", weight=2,
-                                         quadratic=True)
+            # self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_STATE, key="qdot", weight=1, quadratic=True)
+            # self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, derivative=True, key="tau", weight=2,
+            #                              quadratic=True)
             # self.objective_functions.add(ObjectiveFcn.Lagrange.Mini, derivative=True, key="tau", weight=2,
             #                              quadratic=True)
             # self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_STATE, key="qdot", weight=50, quadratic=True,
             # node=Node.END)
             # self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_POSITION, weight=-100, quadratic=False)
         else:
-            self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_POSITION, weight=-100, quadratic=False,
-                                         index=2)
-            # self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_POSITION, weight=-100, quadratic=False)
-            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, derivative=True, key="tau", weight=2,
+            # tau driven
+            # self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_VELOCITY, weight=50, quadratic=True,
+            #                              index=2, node=Node.END)
+            # self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, key="tau", weight=2,
+            #                              quadratic=True)
+            # self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, derivative=True, key="tau", weight=50,
+            #                              quadratic=True)
+            # # self.objective_functions.add(ObjectiveFcn.Lagrange.TRACK_SOFT_CONTACT_FORCES, weight=2,
+            # #                              quadratic=True)
+            # T = np.array(
+            #     [[-0.15861036], [-0.18566153], [-0.57153398], [1.97068638], [-2.02034219], [0.6], [0.], [0.], [0.],
+            #      [0.],
+            #      [0.], [0.]])
+            # self.objective_functions.add(ObjectiveFcn.Mayer.TRACK_STATE, node=Node.END, key='q', weight=100,
+            #                              target=T[:6, :])
+            # self.objective_functions.add(ObjectiveFcn.Mayer.TRACK_STATE, node=Node.END, key='qdot', weight=1000,
+            #                              target=T[6:, :])
+            # tau dot
+            self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_VELOCITY, weight=50, quadratic=True,
+                                         index=2, node=Node.END)
+            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_STATE, key="tau", weight=2,
                                          quadratic=True)
-            self.objective_functions.add(ObjectiveFcn.Mayer.MINIMIZE_COM_VELOCITY, weight=-100, quadratic=False,
-                                         index=2, node=Node.PENULTIMATE)
+            self.objective_functions.add(ObjectiveFcn.Lagrange.MINIMIZE_CONTROL, key="taudot", weight=50,
+                                         quadratic=True)
+            # self.objective_functions.add(ObjectiveFcn.Lagrange.TRACK_SOFT_CONTACT_FORCES, weight=2,
+            #                              quadratic=True)
+            T = self.X0[:2 * self.n_q, -1]
+            self.objective_functions.add(ObjectiveFcn.Mayer.TRACK_STATE, node=Node.END, key='q', weight=100,
+                                         target=T[:6])
+            self.objective_functions.add(ObjectiveFcn.Mayer.TRACK_STATE, node=Node.END, key='qdot', weight=1000,
+                                         target=T[6:])
 
         # Minimize time of the phase
         if self.jumper.time_min != self.jumper.time_max:
@@ -124,22 +157,39 @@ class JumperOcp:
 
     def _set_boundary_conditions(self):
         # Path constraints
-        self.x_bounds.add(bounds=QAndQDotBounds(self.jumper.model))
+        # self.x_bounds.add(bounds=QAndQDotBounds(self.jumper.model))
         self.u_bounds.add([-self.jumper.tau_constant_bound] * self.n_tau, [self.jumper.tau_constant_bound] * self.n_tau)
         self.u_bounds[0][:self.jumper.model.nbRoot(), :] = 0
 
         # Enforce the initial pose and velocity
-        self.x_bounds[0].max[:, 0] = self.initial_states[:, 0] + 1e-4
-        self.x_bounds[0].min[:, 0] = self.initial_states[:, 0] - 1e-4
+        # self.x_bounds[0].max[:, 0] = self.initial_states[:, 0] + 1e-4
+        # self.x_bounds[0].min[:, 0] = self.initial_states[:, 0] - 1e-4
 
         # self.x_bounds[0].max[self.n_q:, -1] = + 1e-3
         # self.x_bounds[0].min[self.n_q:, -1] = - 1e-3
 
-        # self.x_bounds[0][:, 0] = self.initial_states[:, 0]
+        # tau_dot_driven
+        self.x_bounds.add(bounds=QAndQDotBounds(self.jumper.model))
+        self.x_bounds[0][:, 0] = self.initial_states[:, 0]
+        self.x_bounds[0].concatenate(
+            Bounds([-self.jumper.tau_constant_bound] * self.n_tau, [self.jumper.tau_constant_bound] * self.n_tau)
+        )
+        self.x_bounds[0][self.n_q * 2:self.n_q * 2 + self.jumper.model.nbRoot(), :] = 0
 
     def _set_initial_guesses(self):
-        self.x_init.add(self.initial_states)
-        self.u_init.add([0] * self.n_tau)
+        # torque driven
+        # self.x_init.add(self.initial_states)
+        # self.u_init.add([0] * self.n_tau)
+        # torque derivative driven
+        if self.X0 is None:
+            self.x_init.add(InitialGuess(self.initial_states, interpolation=InterpolationType.CONSTANT))
+            self.x_init[0].concatenate(InitialGuess([0] * self.n_tau, interpolation=InterpolationType.CONSTANT))
+            self.u_init.add([0] * self.n_tau)
+        else:
+            self.x_init.add(InitialGuess(self.initial_states, interpolation=InterpolationType.EACH_FRAME))
+            self.x_init[0].concatenate(
+                InitialGuess(np.zeros((self.n_tau, self.jumper.n_shoot + 1)), interpolation=InterpolationType.EACH_FRAME))
+            self.u_init.add([0] * self.n_tau)
 
     def solve(self, limit_memory_max_iter, exact_max_iter, load_path=None,
               force_no_graph=False, linear_solver="mumps", sol=None):
@@ -160,6 +210,7 @@ class JumperOcp:
                 solver.set_maximum_iterations(limit_memory_max_iter)
                 solver.show_online_optim = exact_max_iter == 0 and not force_no_graph
                 solver.set_convergence_tolerance(1e-2)
+                solver.set_constraint_tolerance(1e-3)
                 sol = self.ocp.solve(solver)
 
             if (limit_memory_max_iter > 0 or sol is not None) and exact_max_iter > 0:
@@ -171,6 +222,7 @@ class JumperOcp:
                 solver.set_warm_start_options()
                 solver.show_online_optim = not force_no_graph
                 solver.set_convergence_tolerance(1e-2)
+                solver.set_constraint_tolerance(1e-3)
                 sol = self.ocp.solve(solver)
 
             return sol
